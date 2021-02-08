@@ -36,7 +36,6 @@ def pipeline(image):
     left_top = [cols * 0.4, rows * 0.6]
     right_top = [cols * 0.6, rows * 0.6]
 
-    breakpoint()
     vertices = np.array([[left_bottom, left_top, right_top, right_bottom]], dtype=np.int32)
     print(rows, cols, vertices)
     masked_image = region_of_interest(cimg, vertices)
@@ -94,3 +93,4 @@ def main():
 if __name__ == "__main__":
     main()
 
+1

@@ -51,6 +51,8 @@ def region_of_interest(img, vertices):
     return masked_image
 
 
+#----------------------------------------------------
+
 def draw_lines_orig(img, lines, color=[255, 0, 0], thickness=2):
     """
     Separate line segments by their slope ((y2-y1)/(x2-x1)).
@@ -59,10 +61,10 @@ def draw_lines_orig(img, lines, color=[255, 0, 0], thickness=2):
     This function draws `lines` with `color` and `thickness`.
     Lines are drawn on the image inplace (mutates the image).
     """
-
     for line in lines:
         for x1,y1,x2,y2 in line:
             cv2.line(img, (x1, y1), (x2, y2), color, thickness)
+
 
 def hough_lines_orig(img, rho, theta, threshold, min_line_len, max_line_gap):
     """
@@ -76,34 +78,34 @@ def hough_lines_orig(img, rho, theta, threshold, min_line_len, max_line_gap):
     return line_img
 
 
-
-
 #----------------------------------------------------
 
 def draw_lines(img, lines, color=[255, 0, 0], thickness=2):
-    """
-    Separate line segments by their slope ((y2-y1)/(x2-x1)).
+    """Separate line segments by their slope ((y2-y1)/(x2-x1)).
     Use the slope-intercept form to extrapolate the line.
 
     This function draws `lines` with `color` and `thickness`.
     Lines are drawn on the image inplace (mutates the image).
+
+    It may happen that only left-lane or right-lane is drawn depending on
+    detection.
     """
 
-    left_lane, right_lane, p, q, r, s = seggregate_and_average_lane_lines(lines)
+    left_lane, right_lane = seggregate_and_average_lane_lines(lines)
 
-    try:
-        slope, intercept = left_lane
-        slope, intercept = right_lane
+    extrapolated_lines = []
 
+    if left_lane.size != 1: # Make sure left_lane is not 'nan'
         left_line = extrapolate_lines(img.shape, left_lane)
+        extrapolated_lines.append([left_line])
+
+    if right_lane.size != 1:  # Make sure left_lane is not 'nan'
         right_line = extrapolate_lines(img.shape, right_lane)
+        extrapolated_lines.append([right_line])
 
-        for line in np.array([[left_line], [right_line]]):
-            for x1,y1,x2,y2 in line:
-                cv2.line(img, (x1, y1), (x2, y2), color, thickness)
-
-    except:
-        breakpoint()
+    for line in extrapolated_lines:
+        for x1,y1,x2,y2 in line:
+            cv2.line(img, (x1, y1), (x2, y2), color, thickness)
 
 
 def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap):
@@ -145,38 +147,31 @@ def seggregate_and_average_lane_lines(lines):
     left_lane = []
     right_lane = []
 
-    left_lane_x = []
-    right_lane_x = []
-
     for line in lines:
         for x1,y1,x2,y2 in line:
             # Fit the coordinates into degree 1 polynomial for getting slope and intercept
             slope, intercept = np.polyfit((x1, x2), (y1, y2), 1)
 
+            # Only lines within a certain slope qualify as lane-lines
             if slope < -0.5 and slope > -0.9:
                 left_lane.append((slope, intercept))
             if slope < 0.9 and slope > 0.5:
                 right_lane.append((slope, intercept))
 
-            if slope < 0:
-                left_lane_x.append((slope, intercept))
-            else:
-                right_lane_x.append((slope, intercept))
-
-    return np.average(left_lane, axis = 0), np.average(right_lane, axis = 0), left_lane, right_lane, left_lane_x, right_lane_x
+    return np.average(left_lane, axis = 0), np.average(right_lane, axis = 0)
 
 
 def extrapolate_lines(image_shape, line):
-    """
-    Use slope-intercept form for extrapolating the line.
+    """Use slope-intercept form for extrapolating the line.
 
-    We draw from bottom of the image to 3/5th of the image height.
-    """
-    try:
-        slope, intercept = line
-    except:
-        pass
+    We draw from bottom of the image to 3/5th of the image height (the same
+    height we chose for region of interest).
 
+    Output of this function is the set of two coordinate points indicating the
+    end-points of the extrapolated-line to be drawn.
+
+    """
+    slope, intercept = line
     y1 = image_shape[0]
     y2 = int(y1 * (3 / 5))
     x1 = int((y1 - intercept) / slope)
@@ -219,47 +214,40 @@ def display_imgs(img_list, labels=[], cols=2, fig_size=(15,15)):
 def to_hls(img):
     return cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
 
-def to_hsv(img):
-    return cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-
-def isolate_color_mask(img, low_thresh, high_thresh):
-    assert(low_thresh.all() >=0  and low_thresh.all() <=255)
-    assert(high_thresh.all() >=0 and high_thresh.all() <=255)
-    return cv2.inRange(img, low_thresh, high_thresh)
-
-def adjust_gamma(image, gamma=1.0):
-    invGamma = 1.0 / gamma
-    table = np.array([((i / 255.0) ** invGamma) * 255
-        for i in np.arange(0, 256)]).astype("uint8")
-
-    # apply gamma correction using the lookup table
-    return cv2.LUT(image, table)
 
 def process_image(image):
     """Process a colored image to detect the lane markings
 
-    We do the following steps:
-    1. Convert the image to grayscale
-    2. Blur the image to reduce noise
-    3. Detect edges using Canny algorithm
-    4. Mask the image to ignore un-necessary area
-    5. Detect lines using Hough Transform
-    6. Average and extrapolate the lines to highlight lane lines
+    Input: Color (RGB) Image
+    Output: Input image overlaid with lane markings
     """
 
-    gsimg = adjust_gamma(grayscale(image))
+    # Step 1: Image Pre-processing to highlight lane markings
+
+    # Convert to grayscale
+    gsimg = grayscale(image)
+
+    # Convert to HLS, isolate Yellow and White Color
     hlsimg = to_hls(image)
+    white_mask = cv2.inRange(hlsimg,
+                             np.array([0, 200, 0], dtype=np.uint8),
+                             np.array([200, 255, 255], dtype=np.uint8))
+    yellow_mask = cv2.inRange(hlsimg,
+                              np.array([10, 0, 100], dtype=np.uint8),
+                              np.array([40, 255, 255], dtype=np.uint8))
+    yw_mask = cv2.bitwise_or(white_mask, yellow_mask)
 
-    white_mask = isolate_color_mask(hlsimg, np.array([0, 200, 0], dtype=np.uint8), np.array([200, 255, 255], dtype=np.uint8))
-    yellow_mask = isolate_color_mask(hlsimg, np.array([10, 0, 100], dtype=np.uint8), np.array([40, 255, 255], dtype=np.uint8))
+    # Use the yellow-white mask to highlight the lane markings
+    yw_masked_image = cv2.bitwise_and(gsimg, gsimg, mask=yw_mask)
 
-    mask = cv2.bitwise_or(white_mask, yellow_mask)
-    colored_img = cv2.bitwise_and(gsimg, gsimg, mask=mask)
+    # Remove the noise in the image with a 5x5 Gaussian filter
+    blurred_img = gaussian_blur(yw_masked_image, 5)
 
-    blurred_img = gaussian_blur(colored_img, 5)
-
+    # Step 2: Apply Canny Edge Detection
     cimg = canny(blurred_img, 50, 150)
 
+    # Mask everything except the region of interest
+    # As the markings are always in front, we only need to look at specific area in image.
     rows = image.shape[0]
     cols = image.shape[1]
     left_bottom = [cols * 0.1, rows]
@@ -268,7 +256,10 @@ def process_image(image):
     right_top = [cols * 0.6, rows * 0.6]
 
     vertices = np.array([[left_bottom, left_top, right_top, right_bottom]], dtype=np.int32)
-    masked_image = region_of_interest(cimg, vertices)
+    roi_image = region_of_interest(cimg, vertices)
+
+    # Step 3: Apply Hough Transform to extract line coordinates, and
+    # extrapolate them to draw lane markings
 
     rho = 2 # distance resolution in pixels of the Hough grid
     theta = np.pi/180 # angular resolution in radians of the Hough grid
@@ -276,9 +267,9 @@ def process_image(image):
     min_line_len = 20  # minimum number of pixels making up a line
     max_line_gap = 20    # maximum gap in pixels between connectable line segments
 
-    line_img = hough_lines(masked_image, rho, theta, threshold, min_line_len, max_line_gap)
+    line_img = hough_lines(roi_image, rho, theta, threshold, min_line_len, max_line_gap)
 
+    # Merge the original image with the lane-marking image
     annotated_image = weighted_img(line_img, image, α=0.7, β=1., γ=0.)
 
     return annotated_image
-
